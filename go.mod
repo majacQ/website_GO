@@ -11,7 +11,7 @@ require (
 	github.com/evanw/esbuild v0.14.7
 	github.com/gomodule/redigo v2.0.0+incompatible
 	github.com/google/go-cmp v0.5.6
-	github.com/microcosm-cc/bluemonday v1.0.2
+	github.com/microcosm-cc/bluemonday v1.0.16
 	github.com/n7olkachev/imgdiff v1.0.2
 	github.com/yuin/goldmark v1.3.5
 	golang.org/x/build v0.0.0-20211102155042-c046fca86e58
