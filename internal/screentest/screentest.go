@@ -55,6 +55,9 @@
 //
 //  output gs://bucket-name
 //
+// Values set with the keywords above apply to all testcases that follow. Values set with
+// the keywords below reset each time the test keyword is used.
+//
 // Use test NAME to create a name for the testcase.
 //
 //  test about page
@@ -63,6 +66,10 @@
 // test name is set, PATH will be used as the name for the test.
 //
 //  pathname /about
+//
+// Use status CODE to set an expected HTTP status code. The default is 200.
+//
+//  status 404
 //
 // Use click SELECTOR to add a click an element on the page.
 //
@@ -113,6 +120,7 @@ import (
 	"io/fs"
 	"io/ioutil"
 	"log"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -267,11 +275,11 @@ func cleanOutput(ctx context.Context, tests []*testcase) error {
 	dirs := make(map[string]bool)
 	// The extensions of files that are safe to delete
 	safeExts := map[string]bool{
+		"a.png":    true,
+		"b.png":    true,
 		"diff.png": true,
 	}
 	for _, t := range tests {
-		safeExts[ext(t.outImgA)] = true
-		safeExts[ext(t.outImgB)] = true
 		if t.cacheA {
 			keepFiles[t.outImgA] = true
 		}
@@ -382,6 +390,7 @@ type testcase struct {
 	tasks                     chromedp.Tasks
 	urlA, urlB                string
 	headers                   map[string]interface{}
+	status                    int
 	cacheA, cacheB            bool
 	gcsBucket                 bool
 	outImgA, outImgB, outDiff string
@@ -413,6 +422,7 @@ func readTests(file string, vars map[string]string) ([]*testcase, error) {
 		tasks              chromedp.Tasks
 		originA, originB   string
 		headers            map[string]interface{}
+		status             int = http.StatusOK
 		cacheA, cacheB     bool
 		gcsBucket          bool
 		width, height      int
@@ -438,9 +448,9 @@ func readTests(file string, vars map[string]string) ([]*testcase, error) {
 		switch field {
 		case "":
 			// We've reached an empty line, reset properties scoped to a single test.
-			testName = ""
-			pathname = ""
+			testName, pathname = "", ""
 			tasks = nil
+			status = http.StatusOK
 		case "COMPARE":
 			origins := strings.Split(args, " ")
 			originA, originB = origins[0], origins[1]
@@ -471,6 +481,11 @@ func readTests(file string, vars map[string]string) ([]*testcase, error) {
 				log.Fatalf("invalid header %s on line %d", args, lineNo)
 			}
 			headers[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+		case "STATUS":
+			status, err = strconv.Atoi(args)
+			if err != nil {
+				return nil, fmt.Errorf("strconv.Atoi(%q): %w", args, err)
+			}
 		case "OUTPUT":
 			if strings.HasPrefix(args, gcsScheme) {
 				gcsBucket = true
@@ -535,6 +550,7 @@ func readTests(file string, vars map[string]string) ([]*testcase, error) {
 				urlA:        urlA.String(),
 				urlB:        urlB.String(),
 				headers:     headers,
+				status:      status,
 				blockedURLs: blockedURLs,
 				// Default to viewportScreenshot
 				screenshotType: viewportScreenshot,
@@ -570,8 +586,8 @@ func readTests(file string, vars map[string]string) ([]*testcase, error) {
 			if gcsBucket {
 				outfile = out + "/" + sanitized(test.name)
 			}
-			test.outImgA = outfile + "." + sanitized(urlA.Host) + ".a.png"
-			test.outImgB = outfile + "." + sanitized(urlB.Host) + ".b.png"
+			test.outImgA = outfile + ".a.png"
+			test.outImgB = outfile + ".b.png"
 			test.outDiff = outfile + ".diff.png"
 		default:
 			// We should never reach this error.
@@ -629,7 +645,7 @@ func splitDimensions(text string) (width, height int, err error) {
 // screenshots do not match.
 func (tc *testcase) run(ctx context.Context, update bool) (err error) {
 	now := time.Now()
-	fmt.Fprintf(&tc.output, "test %s\n", tc.name)
+	fmt.Fprintf(&tc.output, "test %s ", tc.name)
 	var screenA, screenB *image.Image
 	g, ctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
@@ -647,7 +663,7 @@ func (tc *testcase) run(ctx context.Context, update bool) (err error) {
 		return nil
 	})
 	if err := g.Wait(); err != nil {
-		fmt.Fprint(&tc.output, err)
+		fmt.Fprint(&tc.output, "\n", err)
 		return err
 	}
 	result := imgdiff.Diff(*screenA, *screenB, &imgdiff.Options{
@@ -656,10 +672,10 @@ func (tc *testcase) run(ctx context.Context, update bool) (err error) {
 	})
 	since := time.Since(now).Truncate(time.Millisecond)
 	if result.Equal {
-		fmt.Fprintf(&tc.output, "%s == %s (%s)\n", tc.urlA, tc.urlB, since)
+		fmt.Fprintf(&tc.output, "(%s)\n", since)
 		return nil
 	}
-	fmt.Fprintf(&tc.output, "%s != %s (%s)\n", tc.urlA, tc.urlB, since)
+	fmt.Fprintf(&tc.output, "(%s)\nFAIL %s != %s\n", since, tc.urlA, tc.urlB)
 	g = &errgroup.Group{}
 	g.Go(func() error {
 		return writePNG(&result.Image, tc.outDiff)
@@ -736,6 +752,10 @@ func (tc *testcase) screenshot(ctx context.Context, url, file string,
 	return &img, nil
 }
 
+type Response struct {
+	Status int
+}
+
 // captureScreenshot runs a series of browser actions and takes a screenshot
 // of the resulting webpage in an instance of headless chrome.
 func (tc *testcase) captureScreenshot(ctx context.Context, url string) ([]byte, error) {
@@ -751,7 +771,9 @@ func (tc *testcase) captureScreenshot(ctx context.Context, url string) ([]byte, 
 	if tc.blockedURLs != nil {
 		tasks = append(tasks, network.SetBlockedURLS(tc.blockedURLs))
 	}
+	var res Response
 	tasks = append(tasks,
+		getResponse(url, &res),
 		chromedp.EmulateViewport(int64(tc.viewportWidth), int64(tc.viewportHeight)),
 		chromedp.Navigate(url),
 		waitForEvent("networkIdle"),
@@ -768,6 +790,10 @@ func (tc *testcase) captureScreenshot(ctx context.Context, url string) ([]byte, 
 	}
 	if err := chromedp.Run(ctx, tasks); err != nil {
 		return nil, fmt.Errorf("chromedp.Run(...): %w", err)
+	}
+	if res.Status != tc.status {
+		fmt.Fprintf(&tc.output, "\nFAIL http status mismatch: got %d; want %d", res.Status, tc.status)
+		return nil, fmt.Errorf("bad status: %d", res.Status)
 	}
 	return buf, nil
 }
@@ -861,6 +887,29 @@ func waitForEvent(eventName string) chromedp.ActionFunc {
 		case <-ctx.Done():
 			return ctx.Err()
 		}
+	}
+}
+
+func getResponse(u string, res *Response) chromedp.ActionFunc {
+	return func(ctx context.Context) error {
+		chromedp.ListenTarget(ctx, func(ev interface{}) {
+			// URL fragments are dropped in request targets so we must strip the fragment
+			// from the URL to make a comparison.
+			_u, _ := url.Parse(u)
+			_u.Fragment = ""
+			switch e := ev.(type) {
+			case *network.EventResponseReceived:
+				if e.Response.URL == _u.String() {
+					res.Status = int(e.Response.Status)
+				}
+			// Capture the status from a redirected response.
+			case *network.EventRequestWillBeSent:
+				if e.RedirectResponse != nil && e.RedirectResponse.URL == _u.String() {
+					res.Status = int(e.RedirectResponse.Status)
+				}
+			}
+		})
+		return nil
 	}
 }
 

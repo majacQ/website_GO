@@ -49,6 +49,10 @@ body contains Sorry, but shared playground snippets are not visible in China.
 body !contains The Go Playground
 body !contains About the Playground
 
+GET https://golang.google.cn/play/p/asdfasdf.go
+code == 500
+body contains Sorry, but shared playground snippets are not visible in China.
+
 # These $GOROOT/*.md files should not serve.
 GET https://go.dev/CONTRIBUTING
 code == 404

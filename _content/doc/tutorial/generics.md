@@ -173,21 +173,21 @@ different types of maps: one that stores `int64` values, and one that stores `fl
 
     ```
     func main() {
-    // Initialize a map for the integer values
-    ints := map[string]int64{
-    	"first": 34,
-    	"second": 12,
-    }
+    	// Initialize a map for the integer values
+    	ints := map[string]int64{
+    		"first":  34,
+    		"second": 12,
+    	}
 
-    // Initialize a map for the float values
-    floats := map[string]float64{
-    	"first": 35.98,
-    	"second": 26.99,
-    }
+    	// Initialize a map for the float values
+    	floats := map[string]float64{
+    		"first":  35.98,
+    		"second": 26.99,
+    	}
 
-    fmt.Printf("Non-Generic Sums: %v and %v\n",
-    	SumInts(ints),
-    	SumFloats(floats))
+    	fmt.Printf("Non-Generic Sums: %v and %v\n",
+    		SumInts(ints),
+    		SumFloats(floats))
     }
     ```
 
@@ -417,7 +417,7 @@ section.
     `SumNumbers` function.
 
     ```
-    // SumNumbers sums the values of map m. Its supports both integers
+    // SumNumbers sums the values of map m. It supports both integers
     // and floats as map values.
     func SumNumbers[K comparable, V Number](m map[K]V) V {
         var s V
@@ -467,10 +467,6 @@ Generic Sums with Constraint: 46 and 62.97
 ## Conclusion {#conclusion}
 
 Nicely done! You've just introduced yourself to generics in Go.
-
-If you want to keep experimenting, you can try writing the `Number` interface
-in terms of `constraints.Integer` and `constraints.Float`, to allow more
-numeric types.
 
 Suggested next topics:
 
